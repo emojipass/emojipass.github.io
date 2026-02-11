@@ -117,15 +117,12 @@ const setupRegisterPage = () => {
   //Admin logic
   const adminCondition = localStorage.getItem('hcs_admin_condition');
   const fieldset = form.querySelector('fieldset'); // find <fieldset> tag in the register form
-  const instructionHint = form.querySelector('.hint');
   const activeCondition = adminCondition || 'digits'; //defalut to "digits"
+  
   if (fieldset) {
     fieldset.style.display = 'none'; // hide the password type selection
     const targetRadio = form.querySelector(`input[name="password-type"][value="${activeCondition}"]`);
     if (targetRadio) targetRadio.checked = true; // auto check this button
-    if (instructionHint) {
-      instructionHint.textContent = `System Assignment: You have been assigned to the ${activeCondition.toUpperCase()} password group.`;
-    }
   }
 
   const participantInput = document.getElementById("participant-id");
