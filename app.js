@@ -4,6 +4,8 @@ const MAX_EMOJI_REPEAT = 2;
 const EMOJI_LIST = ["😀", "😁", "😂", "🤣", "😅", "😊", "😎", "😍", "😘", "🤔", "😴", "😡", "🤯", "🥳", "😈", "🤖"];
 
 const STORAGE_KEY = "hcs_emoji_auth";
+const LOGIN_STATE_KEY = "hcs_logged_in";
+const EXPERIMENT_STATUS_KEY = "hcs_experiment_mode"
 const CENSOR_CHAR = "●";
 const EMPTY_CHAR = "-";
 
@@ -30,6 +32,43 @@ const readRegistration = () => {
     return JSON.parse(raw);
   } catch {
     return null;
+  }
+};
+
+// Save login state to localStorage.
+const saveLoginState = (payload) => {
+  localStorage.setItem(LOGIN_STATE_KEY, JSON.stringify(payload));
+};
+
+const logout = () => {
+  saveLoginState(false);
+  updatePageByLogin();
+  window.location.href="./login.html"
+}
+
+// Check if the website is currently in experiment mode.
+const isExperiment = () => {
+  const raw = localStorage.getItem(EXPERIMENT_STATUS_KEY);
+  if (!raw) return false;
+  try {
+    return JSON.parse(raw) === true;
+  } catch {
+    return false;
+  }
+}
+
+const toggleExperimentStatus = (isOn) => {
+    localStorage.setItem(EXPERIMENT_STATUS_KEY, JSON.stringify(isOn));
+    updatePageByExperimentMode();
+}
+// Check if user is logged in by reading login state from localStorage.
+const isLoggedIn = () => {
+  const raw = localStorage.getItem(LOGIN_STATE_KEY);
+  if (!raw) return false;
+  try {
+    return JSON.parse(raw) === true;
+  } catch {
+    return false;
   }
 };
 
@@ -109,6 +148,25 @@ const fillKeypad = (type, keypad, handleKey, requiredChars = "") => {
 
 };
 
+const updatePageByLogin = () => {
+  const widget = document.getElementById("register-login-widget");
+  if (!widget) return;
+
+  if (isLoggedIn()) {
+    widget.innerHTML = "<a href=\"./account.html\" class=\"nav-link\"><p>My Account</p></a><a href=\"./account.html\"><img id=\"profile-picture\" src=\"resources/profile.png\" alt=\"Profile picture placeholder\"></a>";
+  }
+};
+
+const updatePageByExperimentMode = () => {
+  document.querySelectorAll('.experiment-hidden-toggle').forEach((item) => {
+    if (isExperiment()) {
+      item.style.display = "none";
+    }
+    else {
+      item.style.display = "flex";
+    }
+  });
+}
 // Initialize the register page if present.
 const setupRegisterPage = () => {
   const form = document.getElementById("register-form");
@@ -286,6 +344,8 @@ const setupLoginPage = () => {
     }
     const inputValue = currentInput.join("");
     if (inputValue === registration.generated_password) {
+      saveLoginState(true);
+      updatePageByLogin();
       showMessage("Login successful ✅", "success");
     } else {
       showMessage("Incorrect password, try again.", "error");
@@ -298,3 +358,5 @@ const setupLoginPage = () => {
 
 setupRegisterPage();
 setupLoginPage();
+updatePageByLogin();
+updatePageByExperimentMode();
