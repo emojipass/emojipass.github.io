@@ -273,6 +273,13 @@ const setupRegisterPage = () => {
     window.location.href = "login.html";
   });
 
+  // listen stroage change
+  window.addEventListener('storage', (event) => {
+  if (event.key === 'hcs_admin_condition') {
+    // once change in admin, refresh 
+    window.location.reload();
+  }
+});
 };
 
 // Initialize the login page if present.
