@@ -1,14 +1,28 @@
 ﻿// Handles registration/login flow, PIN generation, input UI, and localStorage state.
 const PIN_LENGTH = 4;
 const MAX_EMOJI_REPEAT = 2;
-const EMOJI_LIST = ["😀", "😁", "😂", "🤣", "😅", "😊", "😎", "😍", "😘", "🤔", "😴", "😡", "🤯", "🥳", "😈", "🤖"];
+const EMOJI_KEYPAD_SIZE = 10;
+const EMOJI_LISTS = {
+  smileys: ["😁", "🤣", "😅", "😊", "😎", "😍", "😘", "🤔", "😴", "😡", "🤯", "🥳", ],
+  objects: ["📚", "🔒", "💡", "📱", "🎒", "🧭"],
+  places: ["🏠",  "🏥", "🗽", "🗼", "🗻", "🌋",],
+  nature: ["🌞", "🌧", "🌈", "🔥", "🌙", "⭐", "🌸"]
+};
+// Keyboard ratio across categories (must sum to 10).
+// If you want fully random from all emojis, set USE_CATEGORY_RATIO to false.
+const KEYPAD_CATEGORY_RATIO = { smileys: 3, objects: 3, places: 2, nature: 2 };
+const USE_CATEGORY_RATIO = true;
+const EMOJI_LIST = Object.values(EMOJI_LISTS).flat();
 
 const STORAGE_KEY = "hcs_emoji_auth";
 const LOGIN_STATE_KEY = "hcs_logged_in";
 const EXPERIMENT_STATUS_KEY = "hcs_experiment_mode"
 const EXPERIMENT_CONDITION_KEY = 'hcs_experiment_condition';
+const EMOJI_MODE_DEFAULT = true;
+const EXPERIMENT_MODE_DEFAULT = true;
 const CENSOR_CHAR = "●";
 const EMPTY_CHAR = "-";
+const FIXED_KEYPAD_KEY = "hcs_fixed_keypad"; // to store 10 selected Emojis for experiment
 
 /*Fisher-Yates alg to shuffle array
 Importance of alg: every permutation is equally likely*/
@@ -18,6 +32,34 @@ const shuffleArray = (array) => {
     [array[i], array[j]] = [array[j], array[i]];
   }
   return array;
+};
+
+const pickRandomUnique = (source, count, excludeSet = new Set()) => {
+  const candidates = source.filter((item) => !excludeSet.has(item));
+  const picked = shuffleArray([...candidates]).slice(0, count);
+  picked.forEach((item) => excludeSet.add(item));
+  return picked;
+};
+
+// Build a 10-key emoji keyboard from category ratios.
+const generateEmojiKeyboard = () => {
+  if (!USE_CATEGORY_RATIO) {
+    return shuffleArray([...EMOJI_LIST]).slice(0, EMOJI_KEYPAD_SIZE);
+  }
+
+  const pickedSet = new Set();
+  const keys = [];
+
+  Object.entries(KEYPAD_CATEGORY_RATIO).forEach(([category, count]) => {
+    const list = EMOJI_LISTS[category] || [];
+    keys.push(...pickRandomUnique(list, count, pickedSet));
+  });
+
+  if (keys.length < EMOJI_KEYPAD_SIZE) {
+    keys.push(...pickRandomUnique(EMOJI_LIST, EMOJI_KEYPAD_SIZE - keys.length, pickedSet));
+  }
+
+  return shuffleArray(keys).slice(0, EMOJI_KEYPAD_SIZE);
 };
 
 // Save registration payload using storage module (Firebase + LocalStorage fallback).
@@ -51,7 +93,8 @@ const readRegistration = async (participantId = null) => {
 
 const saveExperimentCondition = (payload) => {
   localStorage.setItem(EXPERIMENT_CONDITION_KEY, JSON.stringify(payload));
-      updateAdminPageByExperimentCondition();
+  updateAdminPageByExperimentCondition();
+  updateHeaderByExperimentCondition();
 }
 
 // Save login state to localStorage.
@@ -68,16 +111,20 @@ const logout = () => {
 // Check if the website is currently in experiment mode.
 const isExperiment = () => {
   const raw = localStorage.getItem(EXPERIMENT_STATUS_KEY);
-  if (!raw) return false;
+  if (!raw) return EXPERIMENT_MODE_DEFAULT;
   try {
     return JSON.parse(raw) === true;
   } catch {
-    return false;
+    return EXPERIMENT_MODE_DEFAULT;
   }
 }
 
 const toggleExperimentStatus = (isOn) => {
     localStorage.setItem(EXPERIMENT_STATUS_KEY, JSON.stringify(isOn));
+    // if off, clear the fixed keyboard then can randomly reset
+    if (!isOn){
+      localStorage.removeItem(FIXED_KEYPAD_KEY);
+    }
     updatePageByExperimentMode();
     updateAdminPageByExperimentStatus();
 }
@@ -99,10 +146,25 @@ const isEmojiMode = () => {
   try {
     return JSON.parse(raw) === "emoji";
   } catch {
-    // default to true
-    return true;
+    // default to emoji mode default
+    return EMOJI_MODE_DEFAULT;
   }  
 }
+
+// Obtain the currently available set of Emojis
+const getEmojiPool = () => {
+  if (!isExperiment()) return EMOJI_LIST; // use all emoji if under experiment off
+
+  const stored = localStorage.getItem(FIXED_KEYPAD_KEY);
+  if (stored) {
+    return JSON.parse(stored); // if already fixed then return 
+  }
+
+  // Experiment ON: create one fixed 10-key keyboard (uses current category ratio settings).
+  const newPool = generateEmojiKeyboard();
+  localStorage.setItem(FIXED_KEYPAD_KEY, JSON.stringify(newPool));
+  return newPool;
+};
 
 const getExperimentCondition = () => {
   if (isEmojiMode()) {
@@ -127,11 +189,11 @@ const randomDigitPin = () => {
 };
 
 // Generate a random emoji PIN (each emoji can appear at most MAX_EMOJI_REPEAT times).
-const randomEmojiPin = () => {
+const randomEmojiPin = (pool = getEmojiPool()) => {
   const counts = new Map();
   const result = [];
   while (result.length < PIN_LENGTH) {
-    const pick = EMOJI_LIST[Math.floor(Math.random() * EMOJI_LIST.length)];
+    const pick = pool[Math.floor(Math.random() * pool.length)];
     const used = counts.get(pick) || 0;
     if (used >= MAX_EMOJI_REPEAT) continue;
     counts.set(pick, used + 1);
@@ -162,7 +224,7 @@ const createKeyButton = (label, onClick) => {
 };
 
 // fill keypad w/ passcode type, takes the keypad element and func for key handling
-const fillKeypad = (type, keypad, handleKey, requiredChars = "") => {
+const fillKeypad = (type, keypad, handleKey, requiredChars = "", fixedEmojiKeys = null) => {
   keypad.innerHTML = "";
   keypad.className = `keypad ${type}`;
 
@@ -171,20 +233,36 @@ const fillKeypad = (type, keypad, handleKey, requiredChars = "") => {
   if (type === "digits") {
     keysToRender = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"];
   } else {
+    if (Array.isArray(fixedEmojiKeys) && fixedEmojiKeys.length > 0) {
+      keysToRender = [...fixedEmojiKeys];
+      keysToRender.forEach((k) => {
+        keypad.appendChild(createKeyButton(k, handleKey));
+      });
+      return;
+    }
+
     /*Identify the passcode emojis */
     const requiredSet = new Set([...requiredChars]);
     const requiredArray = Array.from(requiredSet);
 
     const availableExtras = EMOJI_LIST.filter(e => !requiredSet.has(e));
 
-    /*shuffle extra emojis to curb predictability */
-    const shuffledExtras = shuffleArray([...availableExtras]);
-
     const slotsNeeded = 10 - requiredArray.length;
-    const selectedExtras = shuffledExtras.slice(0, slotsNeeded);
 
-    /*mix passcode + extras */
-    keysToRender = shuffleArray([...requiredArray, ...selectedExtras]);
+    // experiment ON: no randomisation, fixed extras and fixed order
+    if (isExperiment()){ // fix order, not shuffle
+      // directly obtain the fixed emoji pool under experiment on
+      keysToRender = getEmojiPool();
+    }
+    else{ //keep random under experiment off
+      const requiredSet = new Set([...requiredChars]);
+      const requiredArray = Array.from(requiredSet);
+      const availableExtras = EMOJI_LIST.filter(e => !requiredSet.has(e));
+      const shuffledExtras = shuffleArray([...availableExtras]);
+      const slotsNeeded = 10 - requiredArray.length;
+      const selectedExtras = shuffledExtras.slice(0, slotsNeeded);
+      keysToRender = shuffleArray([...requiredArray, ...selectedExtras]);
+    }
   }
 
   keysToRender.forEach((k) => {
@@ -199,6 +277,23 @@ const updatePageByLogin = () => {
 
   if (isLoggedIn()) {
     widget.innerHTML = "<a href=\"./account.html\" class=\"nav-link\"><p>My Account</p></a><a href=\"./account.html\"><img id=\"profile-picture\" src=\"resources/profile.png\" alt=\"Profile picture placeholder\"></a>";
+  }
+
+  // Update mobile menu
+  const mobileLoginLink = document.querySelector(".mobile-login-link");
+  const mobileRegisterLink = document.querySelector(".mobile-register-link");
+  const mobileAccountLink = document.querySelector(".mobile-account-link");
+
+  if (mobileLoginLink && mobileRegisterLink && mobileAccountLink) {
+    if (isLoggedIn()) {
+      mobileLoginLink.style.display = "none";
+      mobileRegisterLink.style.display = "none";
+      mobileAccountLink.style.display = "flex";
+    } else {
+      mobileLoginLink.style.display = "flex";
+      mobileRegisterLink.style.display = "flex";
+      mobileAccountLink.style.display = "none";
+    }
   }
 };
 
@@ -270,15 +365,17 @@ const updateAdminPageByExperimentCondition = () => {
   }
 };
 
-// Storage mode management - wrapper function for admin controls
-window.setStorageMode = (mode) => {
-  if (window.StorageModule) {
-    const success = window.StorageModule.setStorageMode(mode);
-    if (success) {
-      console.log(`Storage mode set to: ${mode}`);
-      updateAdminPageByStorageMode();
+const setupStorageMode = () => {
+  // Storage mode management - wrapper function for admin controls
+  window.setStorageMode = (mode) => {
+    if (window.StorageModule) {
+      const success = window.StorageModule.setStorageMode(mode);
+      if (success) {
+        console.log(`Storage mode set to: ${mode}`);
+        updateAdminPageByStorageMode();
+      }
     }
-  }
+  };
 };
 
 const updateAdminPageByStorageMode = () => {
@@ -312,27 +409,42 @@ const updateAdminPageByStorageMode = () => {
 
 const updatePageByExperimentMode = () => {
   document.querySelectorAll('.experiment-hidden-toggle').forEach((item) => {
-    if (isExperiment()) {
-      item.style.display = "none";
+    if (!isExperiment()) {
+      item.style.display = "flex";
     }
     else {
-      item.style.display = "flex";
+      item.style.display = "none";
     }
   });
 }
+
+const isDefaultMode = () => {
+  return (isEmojiMode() == EMOJI_MODE_DEFAULT);
+}
+
+const updateHeaderByExperimentCondition = () => {
+  const logo = document.getElementById("logo");
+  if (!logo) return;
+
+  console.log(isDefaultMode());
+
+  if (!isDefaultMode()) {
+    logo.src = "resources/alternative-logo.png";
+  }
+}
+
 // Initialize the register page if present.
 const setupRegisterPage = () => {
   const form = document.getElementById("register-form");
   if (!form) return;
 
   //Admin logic
-  const adminCondition = localStorage.getItem('hcs_experiment_condition');
-  const fieldset = form.querySelector('fieldset'); // find <fieldset> tag in the register form
-  const activeCondition = adminCondition || 'emoji'; //defalut to "digits"
+  const activeCondition = getExperimentCondition(); // get "emoji" or "digits"
+  const fieldset = form.querySelector('fieldset');
   
   if (fieldset) {
     fieldset.style.display = 'none'; // hide the password type selection
-    const targetRadio = form.querySelector(`input[name="password-type"][value=${activeCondition}]`);
+    const targetRadio = form.querySelector(`input[name="password-type"][value="${activeCondition}"]`);
     if (targetRadio) targetRadio.checked = true; // auto check this button
   }
 
@@ -354,6 +466,21 @@ const setupRegisterPage = () => {
     confirmDisplay.textContent = formatInputDisplay(confirmInput);
   };
 
+  const generateBtn = document.getElementById("generate-btn");
+
+  const updateRegButtonState = () => {
+    //id can't be spaces
+    const isValid = participantInput.value.trim().length > 0; 
+    generateBtn.disabled = !isValid;
+  };
+
+  if (participantInput && generateBtn) {
+    participantInput.addEventListener("input", updateRegButtonState);
+    
+    //load once incase of autofill or if user went back a page
+    updateRegButtonState(); 
+  }
+
   //generates password DOES NOT SAVE
   form.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -371,11 +498,15 @@ const setupRegisterPage = () => {
       return;
     }
 
-    const generatedPassword = passwordType === "emoji" ? randomEmojiPin() : randomDigitPin();
+    const generatedKeypad = passwordType === "emoji"
+      ? (isExperiment() ? getEmojiPool() : generateEmojiKeyboard())
+      : null;
+    const generatedPassword = passwordType === "emoji" ? randomEmojiPin(generatedKeypad) : randomDigitPin();
     pendingRegistration = {
       participant_id: participantId,
       password_type: passwordType,
       generated_password: generatedPassword,
+      generated_keypad: generatedKeypad,
       created_at: new Date().toISOString(),
     };
 
@@ -394,7 +525,7 @@ const setupRegisterPage = () => {
       }
     };
     
-    fillKeypad(passwordType, confirmKeypad, handleKey, generatedPassword);
+    fillKeypad(passwordType, confirmKeypad, handleKey, generatedPassword, generatedKeypad);
   });
 
   confirmClearBtn.addEventListener("click", () => {
@@ -455,7 +586,7 @@ const setupRegisterPage = () => {
 
   // listen stroage change
   window.addEventListener('storage', (event) => {
-  if (event.key === 'hcs_admin_condition') {
+  if (event.key === EXPERIMENT_CONDITION_KEY) {
     // once change in admin, refresh 
     window.location.reload();
   }
@@ -534,7 +665,9 @@ const setupLoginPage = async () => {
 
     activeRegistration = registration;
     passwordType = registration.password_type === "digits" ? "digits" : "emoji";
-    fillKeypad(passwordType, keypad, handleKey, registration.generated_password || "");
+    const storedPassword = registration.generated_password || "";
+    const storedKeypad = Array.isArray(registration.generated_keypad) ? registration.generated_keypad : null;
+    fillKeypad(passwordType, keypad, handleKey, storedPassword, storedKeypad);
     hint.textContent = `Loaded Participant ID: ${participantId}`;
     clearAll();
     showMessage("Participant loaded. Enter password to login.", "success");
@@ -639,10 +772,39 @@ const setupLoginPage = async () => {
   renderInput();
 };
 
-setupRegisterPage();
-setupLoginPage();
-updatePageByLogin();
-updatePageByExperimentMode();
-updateAdminPageByExperimentCondition();
-updateAdminPageByExperimentStatus();
-updateAdminPageByStorageMode();
+const setupHamburgerMenu = () => {
+  // Hamburger menu toggle
+  const hamburgerMenu = document.getElementById("hamburger-menu");
+  const mobileMenu = document.getElementById("mobile-menu");
+
+  if (hamburgerMenu && mobileMenu) {
+    hamburgerMenu.addEventListener("click", () => {
+      hamburgerMenu.classList.toggle("active");
+      mobileMenu.classList.toggle("active");
+    });
+
+    // Close menu when a link is clicked
+    mobileMenu.querySelectorAll(".mobile-nav-link").forEach((link) => {
+      link.addEventListener("click", () => {
+        hamburgerMenu.classList.remove("active");
+        mobileMenu.classList.remove("active");
+      });
+    });
+  }
+};
+
+const updateHeader = () => {
+  updatePageByLogin();
+  updateHeaderByExperimentCondition();
+  updatePageByExperimentMode();
+  setupHamburgerMenu();
+}
+
+const updatePage = () => {
+  setupRegisterPage();
+  setupLoginPage();
+  updateAdminPageByExperimentCondition();
+  updateAdminPageByExperimentStatus();
+  updateAdminPageByStorageMode();
+  setupStorageMode();
+}

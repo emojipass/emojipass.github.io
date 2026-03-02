@@ -6,6 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Login</title>
   <link rel="stylesheet" href="styles.css" />
+  <script src="app.js"></script>
 </head>
 
 <body>
@@ -15,7 +16,7 @@
       <nav>
         <ul>
           <a href="./index.html" class="nav-link">
-            <li>Home</li>
+            <p>Home</p>
           </a>
           <a href="./admin.html" class="nav-link experiment-hidden-toggle">
             <p>Admin</p>
@@ -30,7 +31,30 @@
           <p>Register</p>
         </a>
       </div>
+      <button id="hamburger-menu" class="hamburger-menu">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
     </div>
+    <div id="mobile-menu" class="mobile-menu">
+      <a href="./login.html" class="mobile-nav-link mobile-login-link active-page">
+        <p>Login</p>
+      </a>
+      <a href="./register.html" class="mobile-nav-link mobile-register-link">
+        <p>Register</p>
+      </a>
+      <a href="./account.html" class="mobile-nav-link mobile-account-link" style="display: none;">
+        <p>My Account</p>
+      </a>
+      <a href="./index.html" class="mobile-nav-link">
+        <p>Home</p>
+      </a>
+      <a href="./admin.html" class="mobile-nav-link experiment-hidden-toggle">
+        <p>Admin</p>
+      </a>
+    </div>
+    <script>updateHeader();</script>
   </header>
   <main class="container">
     <h1>Login</h1>
@@ -72,7 +96,7 @@
   <script src="firebase-config.js"></script>
   
   <!-- Main App -->
-  <script src="app.js"></script>
+  <script>updatePage();</script>
 </body>
 
 </html>
