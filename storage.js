@@ -45,6 +45,12 @@ let firebaseAuthReadyPromise = new Promise((resolve) => {
   resolveFirebaseAuthReady = resolve;
 });
 
+const resetFirebaseAuthReadyPromise = () => {
+  firebaseAuthReadyPromise = new Promise((resolve) => {
+    resolveFirebaseAuthReady = resolve;
+  });
+};
+
 // Check if Firebase SDK is loaded
 const isFirebaseAvailable = () => {
   return typeof firebase !== "undefined" && firebase.database;
@@ -73,10 +79,17 @@ const initializeFirebase = (config) => {
 };
 
 const setFirebaseAuthReady = (isReady) => {
-  firebaseAuthReady = Boolean(isReady);
-  if (resolveFirebaseAuthReady) {
-    resolveFirebaseAuthReady(firebaseAuthReady);
+  const nextState = Boolean(isReady);
+  const wasReady = firebaseAuthReady;
+  firebaseAuthReady = nextState;
+
+  if (nextState && resolveFirebaseAuthReady) {
+    resolveFirebaseAuthReady(true);
     resolveFirebaseAuthReady = null;
+  }
+
+  if (!nextState && wasReady) {
+    resetFirebaseAuthReadyPromise();
   }
 };
 
@@ -95,6 +108,41 @@ const waitForFirebaseAuthReady = async (timeoutMs = 4000) => {
 
   const readyResult = await Promise.race([firebaseAuthReadyPromise, timeoutPromise]);
   return Boolean(readyResult);
+};
+
+const ensureFirebaseAuthReady = async () => {
+  if (!isFirebaseEnabled()) {
+    return false;
+  }
+
+  if (!firebaseInitialized || !firebaseDatabase) {
+    return false;
+  }
+
+  if (typeof firebase === "undefined" || typeof firebase.auth === "undefined") {
+    return false;
+  }
+
+  if (firebase.auth().currentUser) {
+    setFirebaseAuthReady(true);
+    return true;
+  }
+
+  const becameReady = await waitForFirebaseAuthReady();
+  if (becameReady || firebase.auth().currentUser) {
+    setFirebaseAuthReady(true);
+    return true;
+  }
+
+  try {
+    await firebase.auth().signInAnonymously();
+    setFirebaseAuthReady(true);
+    return true;
+  } catch (error) {
+    console.warn("Firebase auth not ready for database access:", error);
+    setFirebaseAuthReady(false);
+    return false;
+  }
 };
 
 const formatDateTime24 = (dateInput = new Date()) => {
@@ -371,7 +419,7 @@ const fbRecordLoginAttempt = async (username, payload = {}) => {
     const metricsRef = userRef.child("metrics");
 
     const success = Boolean(payload.success);
-    const condition = payload.condition || null;
+    const resolvedCondition = payload.condition === "digits" ? "digits" : payload.condition === "emoji" ? "emoji" : null;
     const durationMs = Number.isFinite(payload.duration_ms) ? payload.duration_ms : 0;
 
     const userSnapshot = await userRef.once("value");
@@ -388,6 +436,8 @@ const fbRecordLoginAttempt = async (username, payload = {}) => {
 
       await metaRef.set(migratedMeta);
     }
+
+    const condition = resolvedCondition || (existingMeta && existingMeta.password_type === "digits" ? "digits" : "emoji");
 
     const metricsTransaction = await metricsRef.transaction((current) => {
       const metrics = current && typeof current === "object"
@@ -468,8 +518,14 @@ const saveUser = async (userObj) => {
 
   // Try Firebase if enabled
   if (isFirebaseEnabled()) {
-    if (typeof firebase !== "undefined" && typeof firebase.auth !== "undefined") {
-      await waitForFirebaseAuthReady();
+    const canUseFirebase = await ensureFirebaseAuthReady();
+    if (!canUseFirebase) {
+      if (mode === "hybrid") {
+        return { success: true, storage: "local", warning: "Firebase auth unavailable" };
+      }
+      if (mode === "firebase") {
+        return localSaveUser(userObj);
+      }
     }
 
     const fbResult = await fbSaveUser(userObj);
@@ -510,8 +566,9 @@ const getUser = async (username = null) => {
 
   // Try Firebase first if enabled
   if (isFirebaseEnabled() && username) {
-    if (typeof firebase !== "undefined" && typeof firebase.auth !== "undefined") {
-      await waitForFirebaseAuthReady();
+    const canUseFirebase = await ensureFirebaseAuthReady();
+    if (!canUseFirebase) {
+      return localGetUser(username);
     }
 
     const fbResult = await fbGetUser(username);
@@ -557,8 +614,9 @@ const recordLoginAttempt = async (username, success) => {
   }
 
   if (isFirebaseEnabled() && username) {
-    if (typeof firebase !== "undefined" && typeof firebase.auth !== "undefined") {
-      await waitForFirebaseAuthReady();
+    const canUseFirebase = await ensureFirebaseAuthReady();
+    if (!canUseFirebase) {
+      return localRecordLoginAttempt(username, payload);
     }
 
     const fbResult = await fbRecordLoginAttempt(username, payload);
@@ -579,6 +637,14 @@ const getUserMetrics = async (username) => {
 
   if (mode !== "local" && isFirebaseEnabled() && username && firebaseInitialized && firebaseDatabase) {
     try {
+      const canUseFirebase = await ensureFirebaseAuthReady();
+      if (!canUseFirebase) {
+        if (mode === "firebase") {
+          return { success: false, error: "Firebase auth unavailable" };
+        }
+        return localGetUserMetrics(username);
+      }
+
       const metricsRef = firebaseDatabase.ref(`${STORAGE_CONFIG.FIREBASE_DB_PATH}/${username}/metrics`);
       const snapshot = await metricsRef.once("value");
       return { success: true, data: snapshot.exists() ? snapshot.val() : null };
