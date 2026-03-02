@@ -14,7 +14,7 @@ Use this checklist to verify the Firebase + LocalStorage integration works corre
 - [ ] Go to Admin Portal
 - [ ] Set Storage Mode to "Local Only"
 - [ ] Go to Register page
-- [ ] Enter Participant ID: "Local001"
+- [ ] Enter Username: "Local001"
 - [ ] Generate a password (emoji or digits)
 - [ ] Confirm the password correctly
 - [ ] See "Success! Account registered." message
@@ -50,7 +50,7 @@ Use this checklist to verify the Firebase + LocalStorage integration works corre
 - [ ] Go to Admin Portal
 - [ ] Set Storage Mode to "Hybrid"
 - [ ] Go to Register page
-- [ ] Enter Participant ID: "Firebase001"
+- [ ] Enter Username: "Firebase001"
 - [ ] Generate and confirm password
 - [ ] Check Console for "User Firebase001 saved to Firebase"
 - [ ] Check Console for "User saved to: both"
@@ -60,7 +60,7 @@ Use this checklist to verify the Firebase + LocalStorage integration works corre
 - [ ] Go to Realtime Database
 - [ ] Navigate to `/users/Firebase001`
 - [ ] Verify data structure includes:
-  - participant_id
+  - username
   - password_type
   - generated_password
   - created_at
@@ -70,7 +70,7 @@ Use this checklist to verify the Firebase + LocalStorage integration works corre
 - [ ] On Device/Browser A: Register user "CrossDevice001"
 - [ ] Note the generated password
 - [ ] On Device/Browser B: Open the login page
-- [ ] Enter Participant ID field (if you add it to login page)
+- [ ] Enter Username field
 - [ ] Login with the password
 - [ ] Should work (data retrieved from Firebase)
 
@@ -146,11 +146,11 @@ Use this checklist to verify the Firebase + LocalStorage integration works corre
 - [ ] Check Firebase (if enabled)
 - [ ] Verify password stored correctly
 
-### Test 6.2: Participant ID Handling
-- [ ] Register WITHOUT entering Participant ID
-- [ ] Should still work (Participant ID is optional)
-- [ ] Register WITH Participant ID "P001"
-- [ ] Verify ID is saved correctly
+### Test 6.2: Username Handling
+- [ ] Register WITHOUT entering Username
+- [ ] Should show validation error (Username is required)
+- [ ] Register WITH Username "user001"
+- [ ] Verify Username is saved correctly
 
 ## Expected Console Messages
 
@@ -164,9 +164,9 @@ User saved to: local (or just success: true)
 ```
 Storage module loaded. Current mode: hybrid
 Firebase initialized successfully
-User {participantId} saved to Firebase
+User {username} saved to Firebase
 User saved to: both
-User {participantId} retrieved from Firebase
+User {username} retrieved from Firebase
 ```
 
 ### Fallback Scenario
@@ -187,7 +187,7 @@ warning: Firebase unavailable
 
 ### Issue: Cross-device login doesn't work
 **Solution**: 
-1. Ensure Participant ID was entered during registration
+1. Ensure Username was entered during registration
 2. Check Firebase Database Rules allow reads
 3. Verify both devices have internet connection
 

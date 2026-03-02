@@ -7,6 +7,7 @@
 
 const STORAGE_CONFIG = {
   LOCAL_KEY: "hcs_emoji_auth",
+  LOCAL_METRICS_KEY: "hcs_login_metrics",
   ADMIN_STORAGE_MODE_KEY: "hcs_admin_storage_mode", // "local" | "firebase" | "hybrid"
   FIREBASE_DB_PATH: "users", // Path in Firebase Realtime Database
 };
@@ -38,6 +39,17 @@ const isFirebaseEnabled = () => {
 
 let firebaseInitialized = false;
 let firebaseDatabase = null;
+let firebaseAuthReady = false;
+let resolveFirebaseAuthReady;
+let firebaseAuthReadyPromise = new Promise((resolve) => {
+  resolveFirebaseAuthReady = resolve;
+});
+
+const resetFirebaseAuthReadyPromise = () => {
+  firebaseAuthReadyPromise = new Promise((resolve) => {
+    resolveFirebaseAuthReady = resolve;
+  });
+};
 
 // Check if Firebase SDK is loaded
 const isFirebaseAvailable = () => {
@@ -66,6 +78,101 @@ const initializeFirebase = (config) => {
   }
 };
 
+const setFirebaseAuthReady = (isReady) => {
+  const nextState = Boolean(isReady);
+  const wasReady = firebaseAuthReady;
+  firebaseAuthReady = nextState;
+
+  if (nextState && resolveFirebaseAuthReady) {
+    resolveFirebaseAuthReady(true);
+    resolveFirebaseAuthReady = null;
+  }
+
+  if (!nextState && wasReady) {
+    resetFirebaseAuthReadyPromise();
+  }
+};
+
+const waitForFirebaseAuthReady = async (timeoutMs = 4000) => {
+  if (firebaseAuthReady) {
+    return true;
+  }
+
+  if (!isFirebaseAvailable() || typeof firebase.auth === "undefined") {
+    return false;
+  }
+
+  const timeoutPromise = new Promise((resolve) => {
+    setTimeout(() => resolve(false), timeoutMs);
+  });
+
+  const readyResult = await Promise.race([firebaseAuthReadyPromise, timeoutPromise]);
+  return Boolean(readyResult);
+};
+
+const ensureFirebaseAuthReady = async () => {
+  if (!isFirebaseEnabled()) {
+    return false;
+  }
+
+  if (!firebaseInitialized || !firebaseDatabase) {
+    return false;
+  }
+
+  if (typeof firebase === "undefined" || typeof firebase.auth === "undefined") {
+    return false;
+  }
+
+  if (firebase.auth().currentUser) {
+    setFirebaseAuthReady(true);
+    return true;
+  }
+
+  const becameReady = await waitForFirebaseAuthReady();
+  if (becameReady || firebase.auth().currentUser) {
+    setFirebaseAuthReady(true);
+    return true;
+  }
+
+  try {
+    await firebase.auth().signInAnonymously();
+    setFirebaseAuthReady(true);
+    return true;
+  } catch (error) {
+    console.warn("Firebase auth not ready for database access:", error);
+    setFirebaseAuthReady(false);
+    return false;
+  }
+};
+
+const formatDateTime24 = (dateInput = new Date()) => {
+  const date = dateInput instanceof Date ? dateInput : new Date(dateInput);
+  if (Number.isNaN(date.getTime())) {
+    return formatDateTime24(new Date());
+  }
+
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  const seconds = String(date.getSeconds()).padStart(2, "0");
+
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+};
+
+const toDateTime24 = (value) => {
+  if (!value) {
+    return formatDateTime24();
+  }
+
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value)) {
+    return value;
+  }
+
+  return formatDateTime24(value);
+};
+
 // ============================================================================
 // LOCAL STORAGE FUNCTIONS
 // ============================================================================
@@ -80,16 +187,22 @@ const localSaveUser = (userObj) => {
   }
 };
 
-const localGetUser = (participantId) => {
+const localGetUser = (username) => {
   try {
     const raw = localStorage.getItem(STORAGE_CONFIG.LOCAL_KEY);
     if (!raw) return { success: false, error: "No user found" };
     
     const userData = JSON.parse(raw);
     
-    // If participantId is provided, verify it matches (for future multi-user support)
-    if (participantId && userData.participant_id !== participantId) {
+    const storedUsername = userData.username;
+
+    // If username is provided, verify it matches (for future multi-user support)
+    if (username && storedUsername !== username) {
       return { success: false, error: "User not found" };
+    }
+
+    if (storedUsername && !userData.username) {
+      userData.username = storedUsername;
     }
     
     return { success: true, data: userData };
@@ -99,7 +212,7 @@ const localGetUser = (participantId) => {
   }
 };
 
-const localDeleteUser = (participantId) => {
+const localDeleteUser = (username) => {
   try {
     localStorage.removeItem(STORAGE_CONFIG.LOCAL_KEY);
     return { success: true };
@@ -107,6 +220,69 @@ const localDeleteUser = (participantId) => {
     console.error("LocalStorage delete failed:", error);
     return { success: false, error: error.message };
   }
+};
+
+const localGetMetricsMap = () => {
+  try {
+    const raw = localStorage.getItem(STORAGE_CONFIG.LOCAL_METRICS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+};
+
+const localSaveMetricsMap = (metricsMap) => {
+  try {
+    localStorage.setItem(STORAGE_CONFIG.LOCAL_METRICS_KEY, JSON.stringify(metricsMap));
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+};
+
+const localRecordLoginAttempt = (username, payload = {}) => {
+  const key = username || "unknown_username";
+  const metricsMap = localGetMetricsMap();
+  const current = metricsMap[key] || {
+    login_attempts_total: 0,
+    login_success_count: 0,
+    login_failure_count: 0,
+    first_attempt_success: null,
+    success_rate: 0,
+  };
+
+  const success = Boolean(payload.success);
+  current.login_attempts_total += 1;
+  if (success) {
+    current.login_success_count += 1;
+  } else {
+    current.login_failure_count += 1;
+  }
+
+  if (current.login_attempts_total === 1 && current.first_attempt_success === null) {
+    current.first_attempt_success = success;
+  }
+
+  current.success_rate = current.login_attempts_total > 0
+    ? Number((current.login_success_count / current.login_attempts_total).toFixed(4))
+    : 0;
+  current.last_attempt_at = formatDateTime24();
+
+  metricsMap[key] = current;
+  const saveResult = localSaveMetricsMap(metricsMap);
+  if (!saveResult.success) {
+    return saveResult;
+  }
+
+  return { success: true, data: current };
+};
+
+const localGetUserMetrics = (username) => {
+  const metricsMap = localGetMetricsMap();
+  const key = username || "unknown_username";
+  return { success: true, data: metricsMap[key] || null };
 };
 
 // ============================================================================
@@ -119,22 +295,52 @@ const fbSaveUser = async (userObj) => {
   }
 
   try {
-    const participantId = userObj.participant_id;
-    if (!participantId) {
-      return { success: false, error: "Participant ID required" };
+    const username = userObj.username;
+    if (!username) {
+      return { success: false, error: "Username required" };
     }
 
-    // Store user data under /users/{participantId}
-    const userRef = firebaseDatabase.ref(`${STORAGE_CONFIG.FIREBASE_DB_PATH}/${participantId}`);
-    
-    // Add server timestamp
-    const dataToSave = {
-      ...userObj,
-      updated_at: firebase.database.ServerValue.TIMESTAMP,
+    const userRef = firebaseDatabase.ref(`${STORAGE_CONFIG.FIREBASE_DB_PATH}/${username}`);
+    const metaRef = userRef.child("meta");
+    const eventsRef = userRef.child("events");
+    const metricsRef = userRef.child("metrics");
+
+    const existingMetaSnapshot = await metaRef.once("value");
+    const existingMeta = existingMetaSnapshot.exists() ? existingMetaSnapshot.val() : {};
+
+    const createdAt = toDateTime24(existingMeta.created_at || userObj.created_at);
+
+    const metaPayload = {
+      username,
+      password_type: userObj.password_type || "emoji",
+      generated_password: userObj.generated_password || "",
+      created_at: createdAt,
     };
 
-    await userRef.set(dataToSave);
-    console.log(`User ${participantId} saved to Firebase`);
+    await metaRef.set(metaPayload);
+
+    await eventsRef.push({
+      condition: metaPayload.password_type,
+      attempt_number: 1,
+      success: true,
+      duration_ms: 0,
+      timestamp: formatDateTime24(),
+    });
+
+    await metricsRef.transaction((current) => {
+      if (current && typeof current === "object") {
+        return current;
+      }
+      return {
+        login_attempts_total: 0,
+        login_success_count: 0,
+        login_failure_count: 0,
+        success_rate: 0,
+        first_attempt_success: null,
+      };
+    });
+
+    console.log(`User ${username} saved to Firebase`);
     return { success: true };
   } catch (error) {
     console.error("Firebase save failed:", error);
@@ -142,17 +348,17 @@ const fbSaveUser = async (userObj) => {
   }
 };
 
-const fbGetUser = async (participantId) => {
+const fbGetUser = async (username) => {
   if (!firebaseInitialized || !firebaseDatabase) {
     return { success: false, error: "Firebase not initialized" };
   }
 
   try {
-    if (!participantId) {
-      return { success: false, error: "Participant ID required" };
+    if (!username) {
+      return { success: false, error: "Username required" };
     }
 
-    const userRef = firebaseDatabase.ref(`${STORAGE_CONFIG.FIREBASE_DB_PATH}/${participantId}`);
+    const userRef = firebaseDatabase.ref(`${STORAGE_CONFIG.FIREBASE_DB_PATH}/${username}`);
     const snapshot = await userRef.once("value");
     
     if (!snapshot.exists()) {
@@ -160,27 +366,35 @@ const fbGetUser = async (participantId) => {
     }
 
     const userData = snapshot.val();
-    console.log(`User ${participantId} retrieved from Firebase`);
-    return { success: true, data: userData };
+    const normalizedData = userData.meta
+      ? {
+          ...userData.meta,
+          events: userData.events || {},
+          metrics: userData.metrics || {},
+        }
+      : userData;
+
+    console.log(`User ${username} retrieved from Firebase`);
+    return { success: true, data: normalizedData };
   } catch (error) {
     console.error("Firebase read failed:", error);
     return { success: false, error: error.message };
   }
 };
 
-const fbDeleteUser = async (participantId) => {
+const fbDeleteUser = async (username) => {
   if (!firebaseInitialized || !firebaseDatabase) {
     return { success: false, error: "Firebase not initialized" };
   }
 
   try {
-    if (!participantId) {
-      return { success: false, error: "Participant ID required" };
+    if (!username) {
+      return { success: false, error: "Username required" };
     }
 
-    const userRef = firebaseDatabase.ref(`${STORAGE_CONFIG.FIREBASE_DB_PATH}/${participantId}`);
+    const userRef = firebaseDatabase.ref(`${STORAGE_CONFIG.FIREBASE_DB_PATH}/${username}`);
     await userRef.remove();
-    console.log(`User ${participantId} deleted from Firebase`);
+    console.log(`User ${username} deleted from Firebase`);
     return { success: true };
   } catch (error) {
     console.error("Firebase delete failed:", error);
@@ -189,24 +403,86 @@ const fbDeleteUser = async (participantId) => {
 };
 
 // Record login attempt (optional analytics)
-const fbRecordLoginAttempt = async (participantId, success, timestamp = null) => {
+const fbRecordLoginAttempt = async (username, payload = {}) => {
   if (!firebaseInitialized || !firebaseDatabase) {
     return { success: false, error: "Firebase not initialized" };
   }
 
   try {
-    if (!participantId) {
-      return { success: false, error: "Participant ID required" };
+    if (!username) {
+      return { success: false, error: "Username required" };
     }
 
-    const attemptRef = firebaseDatabase.ref(
-      `${STORAGE_CONFIG.FIREBASE_DB_PATH}/${participantId}/login_attempts`
-    );
-    
-    await attemptRef.push({
-      success: success,
-      timestamp: timestamp || firebase.database.ServerValue.TIMESTAMP,
+    const userRef = firebaseDatabase.ref(`${STORAGE_CONFIG.FIREBASE_DB_PATH}/${username}`);
+    const metaRef = userRef.child("meta");
+    const eventsRef = userRef.child("events");
+    const metricsRef = userRef.child("metrics");
+
+    const success = Boolean(payload.success);
+    const resolvedCondition = payload.condition === "digits" ? "digits" : payload.condition === "emoji" ? "emoji" : null;
+    const durationMs = Number.isFinite(payload.duration_ms) ? payload.duration_ms : 0;
+
+    const userSnapshot = await userRef.once("value");
+    const userData = userSnapshot.exists() ? userSnapshot.val() : {};
+    const existingMeta = userData && typeof userData.meta === "object" ? userData.meta : null;
+
+    if (!existingMeta) {
+      const migratedMeta = {
+        username,
+        password_type: userData.password_type === "digits" ? "digits" : "emoji",
+        generated_password: typeof userData.generated_password === "string" ? userData.generated_password : "",
+        created_at: toDateTime24(userData.created_at),
+      };
+
+      await metaRef.set(migratedMeta);
+    }
+
+    const condition = resolvedCondition || (existingMeta && existingMeta.password_type === "digits" ? "digits" : "emoji");
+
+    const metricsTransaction = await metricsRef.transaction((current) => {
+      const metrics = current && typeof current === "object"
+        ? current
+        : {
+            login_attempts_total: 0,
+            login_success_count: 0,
+            login_failure_count: 0,
+            success_rate: 0,
+            first_attempt_success: null,
+          };
+
+      const attempts = (metrics.login_attempts_total || 0) + 1;
+      const successCount = (metrics.login_success_count || 0) + (success ? 1 : 0);
+      const failureCount = (metrics.login_failure_count || 0) + (success ? 0 : 1);
+
+      return {
+        ...metrics,
+        login_attempts_total: attempts,
+        login_success_count: successCount,
+        login_failure_count: failureCount,
+        success_rate: Number((successCount / attempts).toFixed(4)),
+        first_attempt_success: metrics.first_attempt_success === null && attempts === 1
+          ? success
+          : metrics.first_attempt_success,
+      };
     });
+
+    const attemptNumber = metricsTransaction && metricsTransaction.snapshot && metricsTransaction.snapshot.exists()
+      ? metricsTransaction.snapshot.val().login_attempts_total || 1
+      : 1;
+
+    await eventsRef.push({
+      condition,
+      attempt_number: attemptNumber,
+      success,
+      duration_ms: durationMs,
+      timestamp: formatDateTime24(),
+    });
+
+    const metricsUpdates = {
+      last_attempt_at: formatDateTime24(),
+    };
+
+    await metricsRef.update(metricsUpdates);
 
     return { success: true };
   } catch (error) {
@@ -242,6 +518,16 @@ const saveUser = async (userObj) => {
 
   // Try Firebase if enabled
   if (isFirebaseEnabled()) {
+    const canUseFirebase = await ensureFirebaseAuthReady();
+    if (!canUseFirebase) {
+      if (mode === "hybrid") {
+        return { success: true, storage: "local", warning: "Firebase auth unavailable" };
+      }
+      if (mode === "firebase") {
+        return localSaveUser(userObj);
+      }
+    }
+
     const fbResult = await fbSaveUser(userObj);
     
     if (fbResult.success) {
@@ -270,17 +556,22 @@ const saveUser = async (userObj) => {
  * - "firebase": Try Firebase first, fallback to LocalStorage
  * - "hybrid": Try Firebase first, fallback to LocalStorage
  */
-const getUser = async (participantId = null) => {
+const getUser = async (username = null) => {
   const mode = getStorageMode();
 
   // If mode is local-only, skip Firebase
   if (mode === "local") {
-    return localGetUser(participantId);
+    return localGetUser(username);
   }
 
   // Try Firebase first if enabled
-  if (isFirebaseEnabled() && participantId) {
-    const fbResult = await fbGetUser(participantId);
+  if (isFirebaseEnabled() && username) {
+    const canUseFirebase = await ensureFirebaseAuthReady();
+    if (!canUseFirebase) {
+      return localGetUser(username);
+    }
+
+    const fbResult = await fbGetUser(username);
     
     if (fbResult.success) {
       console.log("User retrieved from Firebase");
@@ -291,21 +582,21 @@ const getUser = async (participantId = null) => {
   }
 
   // Fallback to LocalStorage
-  return localGetUser(participantId);
+  return localGetUser(username);
 };
 
 /**
  * Delete user registration data
  */
-const deleteUser = async (participantId) => {
+const deleteUser = async (username) => {
   const mode = getStorageMode();
   
   // Delete from LocalStorage
-  const localResult = localDeleteUser(participantId);
+  const localResult = localDeleteUser(username);
 
   // If mode includes Firebase, try to delete there too
-  if (isFirebaseEnabled() && participantId) {
-    await fbDeleteUser(participantId);
+  if (isFirebaseEnabled() && username) {
+    await fbDeleteUser(username);
   }
 
   return localResult;
@@ -314,19 +605,57 @@ const deleteUser = async (participantId) => {
 /**
  * Record a login attempt (for analytics)
  */
-const recordLoginAttempt = async (participantId, success) => {
+const recordLoginAttempt = async (username, success) => {
   const mode = getStorageMode();
+  const payload = typeof success === "object" ? success : { success: Boolean(success) };
   
   if (mode === "local") {
-    // Could add local analytics here if needed
-    return { success: true };
+    return localRecordLoginAttempt(username, payload);
   }
 
-  if (isFirebaseEnabled() && participantId) {
-    return await fbRecordLoginAttempt(participantId, success);
+  if (isFirebaseEnabled() && username) {
+    const canUseFirebase = await ensureFirebaseAuthReady();
+    if (!canUseFirebase) {
+      return localRecordLoginAttempt(username, payload);
+    }
+
+    const fbResult = await fbRecordLoginAttempt(username, payload);
+    if (fbResult.success) return fbResult;
+
+    // In hybrid mode, fallback to local metrics tracking.
+    if (mode === "hybrid") {
+      return localRecordLoginAttempt(username, payload);
+    }
+    return fbResult;
   }
 
-  return { success: true };
+  return localRecordLoginAttempt(username, payload);
+};
+
+const getUserMetrics = async (username) => {
+  const mode = getStorageMode();
+
+  if (mode !== "local" && isFirebaseEnabled() && username && firebaseInitialized && firebaseDatabase) {
+    try {
+      const canUseFirebase = await ensureFirebaseAuthReady();
+      if (!canUseFirebase) {
+        if (mode === "firebase") {
+          return { success: false, error: "Firebase auth unavailable" };
+        }
+        return localGetUserMetrics(username);
+      }
+
+      const metricsRef = firebaseDatabase.ref(`${STORAGE_CONFIG.FIREBASE_DB_PATH}/${username}/metrics`);
+      const snapshot = await metricsRef.once("value");
+      return { success: true, data: snapshot.exists() ? snapshot.val() : null };
+    } catch (error) {
+      if (mode === "firebase") {
+        return { success: false, error: error.message };
+      }
+    }
+  }
+
+  return localGetUserMetrics(username);
 };
 
 // ============================================================================
@@ -340,18 +669,21 @@ window.StorageModule = {
   getUser,
   deleteUser,
   recordLoginAttempt,
+  getUserMetrics,
   
   // Configuration
   getStorageMode,
   setStorageMode,
   isFirebaseEnabled,
   initializeFirebase,
+  setFirebaseAuthReady,
   
   // Direct access to storage layers (for testing/debugging)
   local: {
     save: localSaveUser,
     get: localGetUser,
     delete: localDeleteUser,
+    getMetrics: localGetUserMetrics,
   },
   firebase: {
     save: fbSaveUser,
