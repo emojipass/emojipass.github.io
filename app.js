@@ -75,9 +75,9 @@ const saveRegistration = async (payload) => {
 };
 
 // Read and parse registration payload using storage module (Firebase + LocalStorage fallback).
-const readRegistration = async (participantId = null) => {
+const readRegistration = async (username = null) => {
   if (window.StorageModule) {
-    const result = await window.StorageModule.getUser(participantId);
+    const result = await window.StorageModule.getUser(username);
     return result.success ? result.data : null;
   } else {
     // Fallback to direct localStorage if module not loaded
@@ -175,8 +175,8 @@ const getExperimentCondition = () => {
   }
 }
 
-const isValidParticipantId = (participantId) => {
-  return /^[A-Za-z0-9 _-]{3,64}$/.test(participantId);
+const isValidUsername = (username) => {
+  return /^[A-Za-z0-9 _-]{3,64}$/.test(username);
 };
 
 // Generate a random numeric PIN (digits can repeat).
@@ -448,7 +448,7 @@ const setupRegisterPage = () => {
     if (targetRadio) targetRadio.checked = true; // auto check this button
   }
 
-  const participantInput = document.getElementById("participant-id");
+  const usernameInput = document.getElementById("username");
   const confirmSec = document.getElementById("confirm-passcode");
 
   const confirmDisplay = document.getElementById("confirm-display");
@@ -470,12 +470,12 @@ const setupRegisterPage = () => {
 
   const updateRegButtonState = () => {
     //id can't be spaces
-    const isValid = participantInput.value.trim().length > 0; 
+    const isValid = usernameInput.value.trim().length > 0; 
     generateBtn.disabled = !isValid;
   };
 
-  if (participantInput && generateBtn) {
-    participantInput.addEventListener("input", updateRegButtonState);
+  if (usernameInput && generateBtn) {
+    usernameInput.addEventListener("input", updateRegButtonState);
     
     //load once incase of autofill or if user went back a page
     updateRegButtonState(); 
@@ -486,15 +486,15 @@ const setupRegisterPage = () => {
     event.preventDefault();
     const formData = new FormData(form);
     const passwordType = formData.get("password-type");
-    const participantId = (participantInput?.value || "").trim();
+    const username = (usernameInput?.value || "").trim();
 
-    if (!participantId) {
-      alert("Participant ID is required for experiment tracking.");
+    if (!username) {
+      alert("Username is required for experiment tracking.");
       return;
     }
 
-    if (!isValidParticipantId(participantId)) {
-      alert("Participant ID must be 3-64 chars and only use letters, numbers, spaces, '_' or '-'.");
+    if (!isValidUsername(username)) {
+      alert("Username must be 3-64 chars and only use letters, numbers, spaces, '_' or '-'.");
       return;
     }
 
@@ -503,7 +503,7 @@ const setupRegisterPage = () => {
       : null;
     const generatedPassword = passwordType === "emoji" ? randomEmojiPin(generatedKeypad) : randomDigitPin();
     pendingRegistration = {
-      participant_id: participantId,
+      username,
       password_type: passwordType,
       generated_password: generatedPassword,
       generated_keypad: generatedKeypad,
@@ -605,8 +605,8 @@ const setupLoginPage = async () => {
   const clearBtn = document.getElementById("clear");
   const loginBtn = document.getElementById("login");
   const hint = document.getElementById("login-hint");
-  const participantInput = document.getElementById("login-participant-id");
-  const loadParticipantBtn = document.getElementById("load-participant");
+  const usernameInput = document.getElementById("login-username");
+  const loadUsernameBtn = document.getElementById("load-username");
 
   let activeRegistration = null;
   let passwordType = getExperimentCondition();
@@ -645,21 +645,21 @@ const setupLoginPage = async () => {
     message.classList.add(type);
   };
 
-  const loadRegistrationByParticipant = async () => {
-    const participantId = (participantInput?.value || "").trim();
-    if (!participantId) {
-      showMessage("Enter Participant ID first.", "error");
+  const loadRegistrationByUsername = async () => {
+    const username = (usernameInput?.value || "").trim();
+    if (!username) {
+      showMessage("Enter Username first.", "error");
       return false;
     }
 
-    if (!isValidParticipantId(participantId)) {
-      showMessage("Participant ID must be 3-64 chars and only use letters, numbers, spaces, '_' or '-'.", "error");
+    if (!isValidUsername(username)) {
+      showMessage("Username must be 3-64 chars and only use letters, numbers, spaces, '_' or '-'.", "error");
       return false;
     }
 
-    const registration = await readRegistration(participantId);
+    const registration = await readRegistration(username);
     if (!registration) {
-      showMessage("Participant not found. Check ID or register first.", "error");
+      showMessage("Username not found. Check Username or register first.", "error");
       return false;
     }
 
@@ -668,9 +668,9 @@ const setupLoginPage = async () => {
     const storedPassword = registration.generated_password || "";
     const storedKeypad = Array.isArray(registration.generated_keypad) ? registration.generated_keypad : null;
     fillKeypad(passwordType, keypad, handleKey, storedPassword, storedKeypad);
-    hint.textContent = `Loaded Participant ID: ${participantId}`;
+    hint.textContent = `Loaded Username: ${username}`;
     clearAll();
-    showMessage("Participant loaded. Enter password to login.", "success");
+    showMessage("Username loaded. Enter password to login.", "success");
     return true;
   };
 
@@ -678,17 +678,17 @@ const setupLoginPage = async () => {
   keypad.className = `keypad ${passwordType}`;
 
   clearBtn.addEventListener("click", clearAll);
-  if (loadParticipantBtn) {
-    loadParticipantBtn.addEventListener("click", async () => {
-      await loadRegistrationByParticipant();
+  if (loadUsernameBtn) {
+    loadUsernameBtn.addEventListener("click", async () => {
+      await loadRegistrationByUsername();
     });
   }
 
-  if (participantInput) {
-    participantInput.addEventListener("keydown", async (event) => {
+  if (usernameInput) {
+    usernameInput.addEventListener("keydown", async (event) => {
       if (event.key === "Enter") {
         event.preventDefault();
-        await loadRegistrationByParticipant();
+        await loadRegistrationByUsername();
       }
     });
   }
@@ -721,9 +721,9 @@ const setupLoginPage = async () => {
   });
 
   loginBtn.addEventListener("click", async () => {
-    const enteredParticipantId = (participantInput?.value || "").trim();
-    if (!activeRegistration || activeRegistration.participant_id !== enteredParticipantId) {
-      const loaded = await loadRegistrationByParticipant();
+    const enteredUsername = (usernameInput?.value || "").trim();
+    if (!activeRegistration || activeRegistration.username !== enteredUsername) {
+      const loaded = await loadRegistrationByUsername();
       if (!loaded) return;
     }
 
@@ -748,15 +748,15 @@ const setupLoginPage = async () => {
       showMessage("Login successful ✅", "success");
       
       // Record successful login attempt (for analytics)
-      if (window.StorageModule && activeRegistration.participant_id) {
-        await window.StorageModule.recordLoginAttempt(activeRegistration.participant_id, analyticsPayload);
+      if (window.StorageModule && activeRegistration.username) {
+        await window.StorageModule.recordLoginAttempt(activeRegistration.username, analyticsPayload);
       }
     } else {
       showMessage("Incorrect password, try again.", "error");
       
       // Record failed login attempt (for analytics)
-      if (window.StorageModule && activeRegistration.participant_id) {
-        await window.StorageModule.recordLoginAttempt(activeRegistration.participant_id, analyticsPayload);
+      if (window.StorageModule && activeRegistration.username) {
+        await window.StorageModule.recordLoginAttempt(activeRegistration.username, analyticsPayload);
       }
 
       clearAll();
@@ -764,9 +764,9 @@ const setupLoginPage = async () => {
   });
 
   const cachedRegistration = await readRegistration();
-  if (cachedRegistration && cachedRegistration.participant_id && participantInput) {
-    participantInput.value = cachedRegistration.participant_id;
-    await loadRegistrationByParticipant();
+  if (cachedRegistration && cachedRegistration.username && usernameInput) {
+    usernameInput.value = cachedRegistration.username;
+    await loadRegistrationByUsername();
   }
 
   renderInput();

@@ -139,16 +139,22 @@ const localSaveUser = (userObj) => {
   }
 };
 
-const localGetUser = (participantId) => {
+const localGetUser = (username) => {
   try {
     const raw = localStorage.getItem(STORAGE_CONFIG.LOCAL_KEY);
     if (!raw) return { success: false, error: "No user found" };
     
     const userData = JSON.parse(raw);
     
-    // If participantId is provided, verify it matches (for future multi-user support)
-    if (participantId && userData.participant_id !== participantId) {
+    const storedUsername = userData.username;
+
+    // If username is provided, verify it matches (for future multi-user support)
+    if (username && storedUsername !== username) {
       return { success: false, error: "User not found" };
+    }
+
+    if (storedUsername && !userData.username) {
+      userData.username = storedUsername;
     }
     
     return { success: true, data: userData };
@@ -158,7 +164,7 @@ const localGetUser = (participantId) => {
   }
 };
 
-const localDeleteUser = (participantId) => {
+const localDeleteUser = (username) => {
   try {
     localStorage.removeItem(STORAGE_CONFIG.LOCAL_KEY);
     return { success: true };
@@ -188,8 +194,8 @@ const localSaveMetricsMap = (metricsMap) => {
   }
 };
 
-const localRecordLoginAttempt = (participantId, payload = {}) => {
-  const key = participantId || "unknown_participant";
+const localRecordLoginAttempt = (username, payload = {}) => {
+  const key = username || "unknown_username";
   const metricsMap = localGetMetricsMap();
   const current = metricsMap[key] || {
     login_attempts_total: 0,
@@ -225,9 +231,9 @@ const localRecordLoginAttempt = (participantId, payload = {}) => {
   return { success: true, data: current };
 };
 
-const localGetUserMetrics = (participantId) => {
+const localGetUserMetrics = (username) => {
   const metricsMap = localGetMetricsMap();
-  const key = participantId || "unknown_participant";
+  const key = username || "unknown_username";
   return { success: true, data: metricsMap[key] || null };
 };
 
@@ -241,12 +247,12 @@ const fbSaveUser = async (userObj) => {
   }
 
   try {
-    const participantId = userObj.participant_id;
-    if (!participantId) {
-      return { success: false, error: "Participant ID required" };
+    const username = userObj.username;
+    if (!username) {
+      return { success: false, error: "Username required" };
     }
 
-    const userRef = firebaseDatabase.ref(`${STORAGE_CONFIG.FIREBASE_DB_PATH}/${participantId}`);
+    const userRef = firebaseDatabase.ref(`${STORAGE_CONFIG.FIREBASE_DB_PATH}/${username}`);
     const metaRef = userRef.child("meta");
     const eventsRef = userRef.child("events");
     const metricsRef = userRef.child("metrics");
@@ -257,7 +263,7 @@ const fbSaveUser = async (userObj) => {
     const createdAt = toDateTime24(existingMeta.created_at || userObj.created_at);
 
     const metaPayload = {
-      participant_id: participantId,
+      username,
       password_type: userObj.password_type || "emoji",
       generated_password: userObj.generated_password || "",
       created_at: createdAt,
@@ -286,7 +292,7 @@ const fbSaveUser = async (userObj) => {
       };
     });
 
-    console.log(`User ${participantId} saved to Firebase`);
+    console.log(`User ${username} saved to Firebase`);
     return { success: true };
   } catch (error) {
     console.error("Firebase save failed:", error);
@@ -294,17 +300,17 @@ const fbSaveUser = async (userObj) => {
   }
 };
 
-const fbGetUser = async (participantId) => {
+const fbGetUser = async (username) => {
   if (!firebaseInitialized || !firebaseDatabase) {
     return { success: false, error: "Firebase not initialized" };
   }
 
   try {
-    if (!participantId) {
-      return { success: false, error: "Participant ID required" };
+    if (!username) {
+      return { success: false, error: "Username required" };
     }
 
-    const userRef = firebaseDatabase.ref(`${STORAGE_CONFIG.FIREBASE_DB_PATH}/${participantId}`);
+    const userRef = firebaseDatabase.ref(`${STORAGE_CONFIG.FIREBASE_DB_PATH}/${username}`);
     const snapshot = await userRef.once("value");
     
     if (!snapshot.exists()) {
@@ -320,7 +326,7 @@ const fbGetUser = async (participantId) => {
         }
       : userData;
 
-    console.log(`User ${participantId} retrieved from Firebase`);
+    console.log(`User ${username} retrieved from Firebase`);
     return { success: true, data: normalizedData };
   } catch (error) {
     console.error("Firebase read failed:", error);
@@ -328,19 +334,19 @@ const fbGetUser = async (participantId) => {
   }
 };
 
-const fbDeleteUser = async (participantId) => {
+const fbDeleteUser = async (username) => {
   if (!firebaseInitialized || !firebaseDatabase) {
     return { success: false, error: "Firebase not initialized" };
   }
 
   try {
-    if (!participantId) {
-      return { success: false, error: "Participant ID required" };
+    if (!username) {
+      return { success: false, error: "Username required" };
     }
 
-    const userRef = firebaseDatabase.ref(`${STORAGE_CONFIG.FIREBASE_DB_PATH}/${participantId}`);
+    const userRef = firebaseDatabase.ref(`${STORAGE_CONFIG.FIREBASE_DB_PATH}/${username}`);
     await userRef.remove();
-    console.log(`User ${participantId} deleted from Firebase`);
+    console.log(`User ${username} deleted from Firebase`);
     return { success: true };
   } catch (error) {
     console.error("Firebase delete failed:", error);
@@ -349,17 +355,17 @@ const fbDeleteUser = async (participantId) => {
 };
 
 // Record login attempt (optional analytics)
-const fbRecordLoginAttempt = async (participantId, payload = {}) => {
+const fbRecordLoginAttempt = async (username, payload = {}) => {
   if (!firebaseInitialized || !firebaseDatabase) {
     return { success: false, error: "Firebase not initialized" };
   }
 
   try {
-    if (!participantId) {
-      return { success: false, error: "Participant ID required" };
+    if (!username) {
+      return { success: false, error: "Username required" };
     }
 
-    const userRef = firebaseDatabase.ref(`${STORAGE_CONFIG.FIREBASE_DB_PATH}/${participantId}`);
+    const userRef = firebaseDatabase.ref(`${STORAGE_CONFIG.FIREBASE_DB_PATH}/${username}`);
     const metaRef = userRef.child("meta");
     const eventsRef = userRef.child("events");
     const metricsRef = userRef.child("metrics");
@@ -374,7 +380,7 @@ const fbRecordLoginAttempt = async (participantId, payload = {}) => {
 
     if (!existingMeta) {
       const migratedMeta = {
-        participant_id: participantId,
+        username,
         password_type: userData.password_type === "digits" ? "digits" : "emoji",
         generated_password: typeof userData.generated_password === "string" ? userData.generated_password : "",
         created_at: toDateTime24(userData.created_at),
@@ -494,21 +500,21 @@ const saveUser = async (userObj) => {
  * - "firebase": Try Firebase first, fallback to LocalStorage
  * - "hybrid": Try Firebase first, fallback to LocalStorage
  */
-const getUser = async (participantId = null) => {
+const getUser = async (username = null) => {
   const mode = getStorageMode();
 
   // If mode is local-only, skip Firebase
   if (mode === "local") {
-    return localGetUser(participantId);
+    return localGetUser(username);
   }
 
   // Try Firebase first if enabled
-  if (isFirebaseEnabled() && participantId) {
+  if (isFirebaseEnabled() && username) {
     if (typeof firebase !== "undefined" && typeof firebase.auth !== "undefined") {
       await waitForFirebaseAuthReady();
     }
 
-    const fbResult = await fbGetUser(participantId);
+    const fbResult = await fbGetUser(username);
     
     if (fbResult.success) {
       console.log("User retrieved from Firebase");
@@ -519,21 +525,21 @@ const getUser = async (participantId = null) => {
   }
 
   // Fallback to LocalStorage
-  return localGetUser(participantId);
+  return localGetUser(username);
 };
 
 /**
  * Delete user registration data
  */
-const deleteUser = async (participantId) => {
+const deleteUser = async (username) => {
   const mode = getStorageMode();
   
   // Delete from LocalStorage
-  const localResult = localDeleteUser(participantId);
+  const localResult = localDeleteUser(username);
 
   // If mode includes Firebase, try to delete there too
-  if (isFirebaseEnabled() && participantId) {
-    await fbDeleteUser(participantId);
+  if (isFirebaseEnabled() && username) {
+    await fbDeleteUser(username);
   }
 
   return localResult;
@@ -542,38 +548,38 @@ const deleteUser = async (participantId) => {
 /**
  * Record a login attempt (for analytics)
  */
-const recordLoginAttempt = async (participantId, success) => {
+const recordLoginAttempt = async (username, success) => {
   const mode = getStorageMode();
   const payload = typeof success === "object" ? success : { success: Boolean(success) };
   
   if (mode === "local") {
-    return localRecordLoginAttempt(participantId, payload);
+    return localRecordLoginAttempt(username, payload);
   }
 
-  if (isFirebaseEnabled() && participantId) {
+  if (isFirebaseEnabled() && username) {
     if (typeof firebase !== "undefined" && typeof firebase.auth !== "undefined") {
       await waitForFirebaseAuthReady();
     }
 
-    const fbResult = await fbRecordLoginAttempt(participantId, payload);
+    const fbResult = await fbRecordLoginAttempt(username, payload);
     if (fbResult.success) return fbResult;
 
     // In hybrid mode, fallback to local metrics tracking.
     if (mode === "hybrid") {
-      return localRecordLoginAttempt(participantId, payload);
+      return localRecordLoginAttempt(username, payload);
     }
     return fbResult;
   }
 
-  return localRecordLoginAttempt(participantId, payload);
+  return localRecordLoginAttempt(username, payload);
 };
 
-const getUserMetrics = async (participantId) => {
+const getUserMetrics = async (username) => {
   const mode = getStorageMode();
 
-  if (mode !== "local" && isFirebaseEnabled() && participantId && firebaseInitialized && firebaseDatabase) {
+  if (mode !== "local" && isFirebaseEnabled() && username && firebaseInitialized && firebaseDatabase) {
     try {
-      const metricsRef = firebaseDatabase.ref(`${STORAGE_CONFIG.FIREBASE_DB_PATH}/${participantId}/metrics`);
+      const metricsRef = firebaseDatabase.ref(`${STORAGE_CONFIG.FIREBASE_DB_PATH}/${username}/metrics`);
       const snapshot = await metricsRef.once("value");
       return { success: true, data: snapshot.exists() ? snapshot.val() : null };
     } catch (error) {
@@ -583,7 +589,7 @@ const getUserMetrics = async (participantId) => {
     }
   }
 
-  return localGetUserMetrics(participantId);
+  return localGetUserMetrics(username);
 };
 
 // ============================================================================

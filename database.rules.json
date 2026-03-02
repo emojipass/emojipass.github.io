@@ -3,11 +3,11 @@
     ".read": false,
     ".write": false,
     "users": {
-      "$participantId": {
+      "$username": {
         ".read": "auth != null",
-        ".write": "auth != null && $participantId.matches(/^[A-Za-z0-9 _-]{3,64}$/)",
+        ".write": "auth != null && $username.matches(/^[A-Za-z0-9 _-]{3,64}$/)",
         "meta": {
-          ".validate": "newData.hasChildren(['participant_id','password_type','generated_password','created_at']) && newData.child('participant_id').isString() && newData.child('participant_id').val() === $participantId && newData.child('password_type').isString() && (newData.child('password_type').val() === 'emoji' || newData.child('password_type').val() === 'digits') && newData.child('generated_password').isString() && newData.child('created_at').isString()"
+          ".validate": "newData.hasChildren(['username','password_type','generated_password','created_at']) && newData.child('username').isString() && newData.child('username').val() === $username && newData.child('password_type').isString() && (newData.child('password_type').val() === 'emoji' || newData.child('password_type').val() === 'digits') && newData.child('generated_password').isString() && newData.child('created_at').isString()"
         },
         "events": {
           "$eventId": {
