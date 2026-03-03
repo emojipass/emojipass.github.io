@@ -666,13 +666,13 @@ const setupLoginPage = async () => {
     }
   };
 
-  const queryRegistrationByUsername = async (username) => {
+  const queryRegistrationByUsername = async (username, preferredPasswordType) => {
     if (window.StorageModule && window.StorageModule.firebase && typeof window.StorageModule.firebase.get === "function") {
-      const result = await window.StorageModule.firebase.get(username, null);
+      const result = await window.StorageModule.firebase.get(username, preferredPasswordType);
       return result && result.success ? result.data : null;
     }
 
-    return readRegistration(username, null);
+    return readRegistration(username, preferredPasswordType);
   };
 
   const loadRegistrationByUsername = async () => {
@@ -683,7 +683,7 @@ const setupLoginPage = async () => {
       return false;
     }
 
-    const registration = await queryRegistrationByUsername(enteredUsername);
+    const registration = await queryRegistrationByUsername(enteredUsername, passwordType);
     if (!registration) {
       activeRegistration = null;
       setPasswordEntryVisible(false);
@@ -691,8 +691,28 @@ const setupLoginPage = async () => {
       return false;
     }
 
-    const storedPassword = typeof registration?.meta?.generated_password === "string"
-      ? registration.meta.generated_password
+    const storedPasswordByType = registration?.passwords && typeof registration.passwords === "object"
+      ? registration.passwords[passwordType]
+      : null;
+
+    const hasPasswordForRequestedType = Boolean(
+      storedPasswordByType && typeof storedPasswordByType.generated_password === "string"
+        ? storedPasswordByType.generated_password
+        : registration.password_type === passwordType && typeof registration.generated_password === "string"
+          ? registration.generated_password
+          : ""
+    );
+
+    if (!hasPasswordForRequestedType) {
+      activeRegistration = null;
+      setPasswordEntryVisible(false);
+      const modeLabel = passwordType === "digits" ? "DigitPass" : "EmojiPass";
+      showMessage(`This username is not registered for ${modeLabel} mode.`, "error");
+      return false;
+    }
+
+    const storedPassword = typeof storedPasswordByType?.generated_password === "string"
+      ? storedPasswordByType.generated_password
       : typeof registration.generated_password === "string"
         ? registration.generated_password
         : "";
@@ -702,7 +722,6 @@ const setupLoginPage = async () => {
         ? registration.generated_keypad
         : null;
 
-    passwordType = registration.password_type === "digits" ? "digits" : "emoji";
     fillKeypad(passwordType, keypad, handleKey, storedPassword, storedKeypad);
     currentInput = [];
     attemptStartedAt = Date.now();
